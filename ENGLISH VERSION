@@ -28,9 +28,35 @@ display_logo() {
 
 EOF
   echo -e "\033[1;33m"  # Yellow color
-  echo "Iso Mount tool by GNUTUX"
+  echo "Iso Manager Tool by GNUTUX"
   echo -e "\033[0m"     # Reset color
   sleep 1
+}
+
+# Function to check dependencies
+check_dependencies() {
+    missing=()
+    
+    # Basic dependencies
+    if ! command -v zenity &> /dev/null; then
+        missing+=("zenity (for GUI dialogs)")
+    fi
+    
+    # Extraction dependencies
+    if ! command -v 7z &> /dev/null; then
+        missing+=("p7zip (for archive extraction)")
+    fi
+    
+    # Mount dependencies
+    if ! command -v mount &> /dev/null; then
+        missing+=("mount (for ISO mounting)")
+    fi
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        zenity --error --text="Missing dependencies:\n\n${missing[*]}\n\nPlease install them before proceeding." --width=400
+        return 1
+    fi
+    return 0
 }
 
 # Function to show mounted files
@@ -42,7 +68,7 @@ show_mounted() {
     |   Currently Mounted Files  |
     ==============================
     "
-    mounted=($(findmnt -n -l -o TARGET | grep "$mnt_dir"))
+    mapfile -t mounted < <(findmnt -n -l -o TARGET | grep "$mnt_dir")
 
     if [ ${#mounted[@]} -eq 0 ]; then
         echo "    No files are currently mounted"
@@ -54,17 +80,17 @@ show_mounted() {
 
     echo "
     ==============================
-    Press Enter to return...
+    Press Enter to continue...
     "
     read
 }
 
-# Function to unmount
+# Function to unmount ISO
 unmount_iso() {
     while true; do
         clear
         display_logo
-        mounted=($(findmnt -n -l -o TARGET | grep "$mnt_dir"))
+        mapfile -t mounted < <(findmnt -n -l -o TARGET | grep "$mnt_dir")
 
         echo "
         ==============================
@@ -87,16 +113,20 @@ unmount_iso() {
         | 0. Back                   |
         ==============================
         "
-        read -p "Choose an option [0-1]: " sub_choice
+        read -p "Choose option [0-1]: " sub_choice
 
         case $sub_choice in
             1)
                 if [ ${#mounted[@]} -gt 0 ]; then
                     read -p "Enter file number: " file_num
                     if [[ $file_num -ge 1 && $file_num -le ${#mounted[@]} ]]; then
-                        sudo umount "${mounted[$((file_num-1))]}"
-                        sudo rmdir "${mounted[$((file_num-1))]}"
-                        echo "Successfully unmounted"
+                        mount_point="${mounted[$((file_num-1))]}"
+                        if sudo umount "$mount_point"; then
+                            sudo rmdir "$mount_point"
+                            echo "Successfully unmounted"
+                        else
+                            echo "Failed to unmount!"
+                        fi
                         sleep 1
                     else
                         echo "Invalid number!"
@@ -145,7 +175,7 @@ mount_iso() {
         | 0. Back                   |
         ==============================
         "
-        read -p "Choose an option [0-2]: " choice
+        read -p "Choose option [0-2]: " choice
 
         case $choice in
             1)
@@ -175,7 +205,82 @@ mount_iso() {
     done
 }
 
-# Main setup function
+# ISO extraction function
+extract_iso() {
+    # Check for extraction dependency
+    if ! command -v 7z &> /dev/null; then
+        zenity --error --text="7z tool not installed!\n\nPlease install with:\n\nsudo apt install p7zip-full   # Ubuntu/Debian\nsudo yum install p7zip        # RHEL/CentOS" --width=500
+        return
+    fi
+
+    clear
+    display_logo
+    echo "
+    ==============================
+    |      Extract ISO File      |
+    ==============================
+    "
+    if select_iso_file; then
+        iso_path=$(cat "$temp_file")
+        echo "
+        ==============================
+        | 1. Extract here           |
+        | 2. Extract to folder      |
+        | 0. Back                   |
+        ==============================
+        "
+        read -p "Choose option [0-2]: " extract_choice
+
+        case $extract_choice in
+            1)
+                output_dir="$(dirname "$iso_path")/$(basename "$iso_path" .iso)_extracted"
+                ;;
+            2)
+                output_dir=$(zenity --file-selection --directory --title="Select destination folder" 2>/dev/null)
+                [ -z "$output_dir" ] && return
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "Invalid choice!"
+                sleep 1
+                return
+                ;;
+        esac
+
+        # Check if target directory exists and has files
+        if [ -d "$output_dir" ] && [ "$(ls -A "$output_dir")" ]; then
+            choice=$(zenity --list --title="Existing Files" --text="Target folder contains existing files:" --column="Option" "Overwrite all" "Skip existing" "Cancel operation" --width=400 --height=200)
+            
+            case $choice in
+                "Overwrite all")
+                    rm -rf "${output_dir:?}/"*
+                    ;;
+                "Skip existing")
+                    extract_option="-aou"
+                    ;;
+                "Cancel operation"|*)
+                    return
+                    ;;
+            esac
+        else
+            mkdir -p "$output_dir"
+        fi
+
+        echo "Extracting, please wait..."
+        
+        if 7z x "$iso_path" -o"$output_dir" $extract_option >/dev/null 2>&1; then
+            zenity --info --text="Successfully extracted to: $output_dir" --width=400
+        else
+            zenity --error --text="Extraction failed!" --width=200
+        fi
+    fi
+    # Auto-return after completion
+    sleep 1
+}
+
+# ISO directory setup
 setup_iso_dir() {
     while true; do
         clear
@@ -189,7 +294,7 @@ setup_iso_dir() {
         | 0. Back                   |
         ==============================
         "
-        read -p "Choose an option [0-2]: " sub_choice
+        read -p "Choose option [0-2]: " sub_choice
 
         case $sub_choice in
             1)
@@ -212,6 +317,12 @@ setup_iso_dir() {
 
 # Main menu
 main_menu() {
+    # Check dependencies on startup
+    if ! check_dependencies; then
+        echo "Missing dependencies prevent the tool from running."
+        exit 1
+    fi
+
     while true; do
         clear
         display_logo
@@ -219,13 +330,13 @@ main_menu() {
         cat << "EOF"
 ┌──────────────────────────────────────┐
 │   Advanced ISO/IMG Management Tool   │
-│  With easy interface and full        │
+│  With easy interface and complete    │
 │  features                            │
 └──────────────────────────────────────┘
 EOF
         echo "
         ==============================
-        |     ISO Mounting Tool      |
+        |     ISO Manager Tool       |
         ==============================
         | Current ISO path: $iso_dir
         ==============================
@@ -233,16 +344,18 @@ EOF
         | 2. Mount ISO file         |
         | 3. Unmount ISO file       |
         | 4. Show mounted files      |
+        | 5. Extract ISO file        |
         | 0. Exit                    |
         ==============================
         "
-        read -p "Choose an option [0-4]: " choice
+        read -p "Choose option [0-5]: " choice
 
         case $choice in
             1) setup_iso_dir ;;
             2) mount_iso ;;
             3) unmount_iso ;;
             4) show_mounted ;;
+            5) extract_iso ;;
             0)
                 rm -f "$temp_file" 2>/dev/null
                 echo "Goodbye!"
