@@ -62,11 +62,13 @@ show_mounted() {
 }
 
 # دالة إلغاء الضم
+# دالة إلغاء الضم المعدلة
 unmount_iso() {
     while true; do
         clear
         display_logo
-        mounted=($(findmnt -n -l -o TARGET | grep "$mnt_dir"))
+        # استخدام mapfile للتعامل مع المسارات التي تحتوي على مسافات
+        mapfile -t mounted < <(findmnt -n -l -o TARGET | grep "$mnt_dir")
 
         echo "
         ==============================
@@ -96,9 +98,13 @@ unmount_iso() {
                 if [ ${#mounted[@]} -gt 0 ]; then
                     read -p "أدخل رقم الملف: " file_num
                     if [[ $file_num -ge 1 && $file_num -le ${#mounted[@]} ]]; then
-                        sudo umount "${mounted[$((file_num-1))]}"
-                        sudo rmdir "${mounted[$((file_num-1))]}"
-                        echo "تم إلغاء الضم بنجاح"
+                        mount_point="${mounted[$((file_num-1))]}"
+                        if sudo umount "$mount_point"; then
+                            sudo rmdir "$mount_point"
+                            echo "تم إلغاء الضم بنجاح"
+                        else
+                            echo "فشل في إلغاء الضم!"
+                        fi
                         sleep 1
                     else
                         echo "رقم غير صحيح!"
@@ -212,21 +218,128 @@ setup_iso_dir() {
     done
 }
 
-# القائمة الرئيسية
+# دالة التحقق من الاعتماديات
+check_dependencies() {
+    missing=()
+    
+    # الاعتماديات الأساسية
+    if ! command -v zenity &> /dev/null; then
+        missing+=("zenity (واجهة المستخدم الرسومية)")
+    fi
+    
+    # اعتماديات فك الضغط
+    if ! command -v 7z &> /dev/null; then
+        missing+=("p7zip (لفك ضغط الملفات)")
+    fi
+    
+    # اعتماديات الضم
+    if ! command -v mount &> /dev/null; then
+        missing+=("mount (لضم الملفات)")
+    fi
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        zenity --error --text="الإعتماديات الناقصة:\n\n${missing[*]}\n\nالرجاء تثبيتها قبل المتابعة." --width=400
+        return 1
+    fi
+    return 0
+}
+
+# دالة فك ضغط ملف ISO مع التحقق من الملفات المكررة
+
+extract_iso() {
+    # التحقق من الاعتماديات أولاً
+    if ! command -v 7z &> /dev/null; then
+        zenity --error --text="الأداة 7z غير مثبتة!\n\nالرجاء تثبيتها بأحد الأمرين:\n\nsudo apt install p7zip-full   # لأوبونتو/ديبيان\nsudo yum install p7zip        # لـRHEL/CentOS" --width=500
+        return
+    fi
+
+    clear
+    display_logo
+    echo "
+    ==============================
+    |      فك ضغط ملف ISO       |
+    ==============================
+    "
+    if select_iso_file; then
+        iso_path=$(cat "$temp_file")
+        echo "
+        ==============================
+        | 1. فك الضغط هنا           |
+        | 2. فك الضغط في مجلد آخر   |
+        | 0. رجوع                   |
+        ==============================
+        "
+        read -p "اختر خياراً [0-2]: " extract_choice
+
+        case $extract_choice in
+            1)
+                output_dir="$(dirname "$iso_path")/$(basename "$iso_path" .iso)_extracted"
+                ;;
+            2)
+                output_dir=$(zenity --file-selection --directory --title="اختر مجلد الوجهة" 2>/dev/null)
+                [ -z "$output_dir" ] && return
+                ;;
+            0)
+                return
+                ;;
+            *)
+                echo "اختيار غير صحيح!"
+                sleep 1
+                return
+                ;;
+        esac
+
+        # التحقق إذا كان المجلد الهدف موجوداً ويحتوي على ملفات
+        if [ -d "$output_dir" ] && [ "$(ls -A "$output_dir")" ]; then
+            choice=$(zenity --list --title="ملفات موجودة مسبقاً" --text="المجلد الهدف يحتوي على ملفات موجودة مسبقاً:" --column="خيار" "استبدال الكل" "تخطي الملفات الموجودة" "إلغاء العملية" --width=400 --height=200)
+            
+            case $choice in
+                "استبدال الكل")
+                    rm -rf "${output_dir:?}/"*
+                    ;;
+                "تخطي الملفات الموجودة")
+                    extract_option="-aou"
+                    ;;
+                "إلغاء العملية"|*)
+                    return
+                    ;;
+            esac
+        else
+            mkdir -p "$output_dir"
+        fi
+
+        echo "جاري فك الضغط، يرجى الانتظار..."
+        
+        if 7z x "$iso_path" -o"$output_dir" $extract_option >/dev/null 2>&1; then
+            zenity --info --text="تم فك الضغط بنجاح في: $output_dir" --width=400
+        else
+            zenity --error --text="فشل في فك الضغط!" --width=200
+        fi
+    fi
+    # العودة تلقائياً بعد الانتهاء دون طلب ملف جديد
+    sleep 1
+}
+# تحديث القائمة الرئيسية للتحقق من الاعتماديات أولاً
 main_menu() {
+    # التحقق من الاعتماديات عند البدء
+    if ! check_dependencies; then
+        echo "الاعتماديات الناقصة تمنع تشغيل البرنامج."
+        exit 1
+    fi
+
     while true; do
         clear
         display_logo
         echo -e "\033[1;34m"
-cat << "EOF"
+        cat << "EOF"
 ┌──────────────────────────────────────┐
-│   أداة متقدمة لإدارة ملفات ISO/IMG        │
-│  مع واجهة سهلة وخصائص متكاملة           │
+│   أداة متقدمة لإدارة ملفات ISO/IMG   │
+│  مع واجهة سهلة وخصائص متكاملة       │
 └──────────────────────────────────────┘
 EOF
         echo "
         ==============================
-        |     أداة صم ملفات إيزو   |
+        |     أداة إدارة ملفات إيزو   |
         ==============================
         | مسار ISO الحالي: $iso_dir
         ==============================
@@ -234,16 +347,18 @@ EOF
         | 2. ضم ملف ISO             |
         | 3. إلغاء ضم ملف ISO       |
         | 4. عرض الملفات المضمومة  |
+        | 5. فك ضغط ملف ISO         |
         | 0. خروج                    |
         ==============================
         "
-        read -p "اختر خياراً [0-4]: " choice
+        read -p "اختر خياراً [0-5]: " choice
 
         case $choice in
             1) setup_iso_dir ;;
             2) mount_iso ;;
             3) unmount_iso ;;
             4) show_mounted ;;
+            5) extract_iso ;;
             0)
                 rm -f "$temp_file" 2>/dev/null
                 echo "مع السلامة!"
