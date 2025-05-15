@@ -1,6 +1,6 @@
 # ملف `README.md`
 
-```markdown
+
 # ISO Mount Tool (IMT) - أداة ضم ملفات ISO
 
 <div dir="rtl">
