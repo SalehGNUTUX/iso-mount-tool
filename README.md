@@ -1,5 +1,3 @@
-إليك محتوى ملف `README.md` ثنائي اللغة (العربية والإنجليزية) لمشروع ISO Mount Tool (IMT):
-
 # ملف `README.md`
 
 ```markdown
