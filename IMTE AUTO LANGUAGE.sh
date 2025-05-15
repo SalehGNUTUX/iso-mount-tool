@@ -6,6 +6,18 @@
 # =============================================
 
 #!/bin/bash
+
+
+if [ "$EUID" -ne 0 ]; then
+    if command -v pkexec &> /dev/null; then
+        exec pkexec "$0" "$@"
+    else
+        echo "Please run as root"
+        exit 1
+    fi
+fi
+
+
 HERE="$(dirname "$(readlink -f "${0}")")"
 
 # Detect default terminal
