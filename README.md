@@ -55,7 +55,7 @@ chmod +x imt.sh
 0. خروج
 
 ## 📜 الرخصة
-هذا المشروع مرخص تحت **رخصة MIT**.
+هذا المشروع مرخص تحت **رخصة GPL-2.0**.
 
 ## 🤝 المساهمة
 ترحب المساهمات عبر:
@@ -119,7 +119,7 @@ Main menu includes:
 0. Exit
 
 ## 📜 License
-This project is licensed under the **MIT License**.
+This project is licensed under the **GPL-2.0 license**.
 
 ## 🤝 Contributing
 Contributions are welcome via:
