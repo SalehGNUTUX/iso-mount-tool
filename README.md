@@ -121,6 +121,9 @@ Main menu includes:
 6. Switch language
 0. Exit
 
+   ![image](https://github.com/user-attachments/assets/731fe836-2e95-436b-a0e2-c5f04bf13d40)
+
+
 ## 📜 License
 This project is licensed under the **GPL-2.0 license**.
 
